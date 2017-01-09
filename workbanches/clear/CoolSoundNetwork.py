@@ -128,41 +128,46 @@ def make_speechtovec(incoming, sound_shape, num_units, **kwargs):
 
 class Network(object):
     """docstring for Network."""
-    def __init__(self, sim_voice=True, load_weights=True, load_vect=True,
-                    weights_file_name=None, vec_weights_file_name=None):
+    def __init__(self,
+                    sim_voice=True,
+                    load_similar_weights=True,
+                    load_vect=True,
+                    vectorizer_weights_file_name="vectorizer_weights.npy",
+                    similar_weights_file_name="simvoice_weights.npy",
+                    out_vec_size=300):
         super(Network, self).__init__()
         self.sim_voice = sim_voice
-        input_triplets = T.tensor4("Triplets input")
+        input_triplets = T.tensor4("Triplets input", dtype="float32")
         # input_two = T.tensor4("People input", dtype="float32")
 
         self._triplets_input = lasagne.layers.InputLayer((None, None) + SOUND_SHAPE, input_var=input_triplets)
-        # nn = lasagne.layers.batch_norm(_triplets_input)
-        # people_inputs = InputLayer((None, 2, 500, 513))
-        _ ,self._vectorizer_l= make_speechtovec(lasagne.layers.dimshuffle(self._triplets_input,[0,1,3,2]), SOUND_SHAPE[::-1], 100)
+        dism = lasagne.layers.dimshuffle(self._triplets_input,[0,1,3,2])
+        _ ,self._vectorizer_l= make_speechtovec(dism, SOUND_SHAPE[::-1], out_vec_size)
 
         if sim_voice:
-            vector_output = lasagne.layers.ReshapeLayer(self._vectorizer_l, (-1, 2, 100))
-            nn = lasagne.layers.batch_norm(vector_output)
-            conv_layer = lasagne.layers.Conv1DLayer(nn, 100, 2)
+            sim_voice_input_var = T.tensor3("Similar input", dtype="float32")
+            self._simvoice_input = lasagne.layers.InputLayer((None, 2, out_vec_size), input_var=sim_voice_input_var)
+            nn = lasagne.layers.batch_norm(self._simvoice_input)
+            conv_layer = lasagne.layers.Conv1DLayer(nn, out_vec_size, 2)
             nn = lasagne.layers.batch_norm(conv_layer)
+            dense0 = lasagne.layers.DenseLayer(nn, 150)
+            nn = lasagne.layers.batch_norm(dense0)
             dense0 = lasagne.layers.DenseLayer(nn, 50)
             nn = lasagne.layers.batch_norm(dense0)
             self._output = lasagne.layers.DenseLayer(nn, 1, nonlinearity=lasagne.nonlinearities.sigmoid)
 
 
             VvsV = lasagne.layers.get_output(self._output) #voice versus voice
-            self._VvsVfun = theano.function([self._triplets_input.input_var],VvsV ,allow_input_downcast=True)
+            self._VvsVfun = theano.function([self._simvoice_input.input_var],VvsV ,allow_input_downcast=True)
 
-            self._predict = VvsV
+            self._predict_similar = VvsV
 
-        if load_weights:
-            weights_file_name = weights_file_name or "weights_net.npy"
-            param = np.load(weights_file_name)
+        if load_similar_weights:
+            param = np.load(similar_weights_file_name)
             lasagne.layers.set_all_param_values(self._output, param)
 
         if load_vect:
-            weights_file_name = vec_weights_file_name or "weights.npy"
-            param = np.load(weights_file_name)
+            param = np.load(vectorizer_weights_file_name)
             lasagne.layers.set_all_param_values(self._vectorizer_l, param)
 
 
@@ -197,26 +202,26 @@ class Network(object):
                 voice_array = np.array([[spec]])
         else:
             voice_array = make_shape_10(voice_array)
-
         return self._vectorizer_fun(voice_array)
 
-    def simvoice(self, voice_array=None, path=None):
-        """voice_array: 4 dimensional temsor [sample0, sample1, time, frequency]
-        len(sample1) = 2
-        len(frequency) = 513"""
-        raise NotImplementedError("It's not work now")  
-        assert voice_array is not None or path is not None
-        if path != None:
-            spec = get_spectrogram(path)
+    def simvoice(self, voice_array=None, paths=None):
+        """voice_array: 3 dimensional tensor [sample0, time, frequency]
+            len(sample0) = 2
+            len(frequency) = 513
+        paths: list
+            len(paths) = 2"""
 
-            if spec.shape[-2]//10 > 0:
-                voice_array = make_shape_10(spec)
+        assert (voice_array is not None or path is not None)
+        if not self.simvoice:
+            raise AttributeError("When I was initialized, you have said 'simvoice=False'\nPlese, do something with this")
 
-            else:
-                voice_array = np.array([[spec]])
+        if paths:
+            vec1 = np.mean((self.vectorizer(path=paths[0])), axis=0)
+            vec2 = np.mean((self.vectorizer(path=paths[1])), axis=0)
         else:
-            voice_array = make_shape_10(voice_array)
-        return self._VvsVfun(voice_array)
+            vec1 = np.mean((self.vectorizer(voice_array=voice_array[0])), axis=0)
+            vec2 = np.mean((self.vectorizer(voice_array=voice_array[1])), axis=0)
+        return self._VvsVfun([[vec1, vec2]])
     #
     # def train(self, X, y, X_val=None, y_val=None, count_epoch=100,
     #             batchsize=1000, iterate_minibatches=_iterate_minibatches):
