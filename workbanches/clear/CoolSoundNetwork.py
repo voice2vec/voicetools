@@ -146,9 +146,9 @@ class Network(object):
 
         if sim_voice:
             sim_voice_input_var = T.tensor3("Similar input", dtype="float32")
-            self._simvoice_input = lasagne.layers.InputLayer((None, 2, out_vec_size), input_var=sim_voice_input_var)
-            nn = lasagne.layers.batch_norm(self._simvoice_input)
-            conv_layer = lasagne.layers.Conv1DLayer(nn, out_vec_size, 2)
+            self._similar_inp = lasagne.layers.InputLayer((None, 2, 300), input_var=sim_voice_input_var)
+            nn = lasagne.layers.batch_norm(self._similar_inp)
+            conv_layer = lasagne.layers.Conv1DLayer(nn, 300, 2)
             nn = lasagne.layers.batch_norm(conv_layer)
             dense0 = lasagne.layers.DenseLayer(nn, 150)
             nn = lasagne.layers.batch_norm(dense0)
@@ -158,7 +158,7 @@ class Network(object):
 
 
             VvsV = lasagne.layers.get_output(self._output) #voice versus voice
-            self._VvsVfun = theano.function([self._simvoice_input.input_var],VvsV ,allow_input_downcast=True)
+            self._VvsVfun = theano.function([self._similar_inp.input_var],VvsV ,allow_input_downcast=True)
 
             self._predict_similar = VvsV
 
@@ -204,23 +204,26 @@ class Network(object):
             voice_array = make_shape_10(voice_array)
         return self._vectorizer_fun(voice_array)
 
-    def simvoice(self, voice_array=None, paths=None):
+    def simvoice(self, voice_array=None, paths=None, vectors=None):
         """voice_array: 3 dimensional tensor [sample0, time, frequency]
             len(sample0) = 2
             len(frequency) = 513
         paths: list
-            len(paths) = 2"""
+            len(paths) = 2
+        vectors: matrix, shape = 2, 300"""
 
-        assert (voice_array is not None or path is not None)
+        assert (voice_array is not None or paths is not None or vectors is not None)
         if not self.simvoice:
             raise AttributeError("When I was initialized, you have said 'simvoice=False'\nPlese, do something with this")
 
         if paths:
             vec1 = np.mean((self.vectorizer(path=paths[0])), axis=0)
             vec2 = np.mean((self.vectorizer(path=paths[1])), axis=0)
-        else:
+        elif voice_array:
             vec1 = np.mean((self.vectorizer(voice_array=voice_array[0])), axis=0)
             vec2 = np.mean((self.vectorizer(voice_array=voice_array[1])), axis=0)
+        else:
+            return self._VvsVfun([vectors])
         return self._VvsVfun([[vec1, vec2]])
     #
     # def train(self, X, y, X_val=None, y_val=None, count_epoch=100,
